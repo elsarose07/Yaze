@@ -20,8 +20,8 @@ class SpeedGraphWidget(QWidget):
         self.peak_down = 0.0
         self.peak_up = 0.0
 
-        self.setMinimumHeight(200)
-        self.setStyleSheet("background-color: #1E293B; border-radius: 8px;")
+        self.setMinimumHeight(220)
+        self.setStyleSheet("background-color: #18181B; border: 1px solid #27272A; border-radius: 8px;")
 
     def add_data_point(self, download_bps: float, upload_bps: float) -> None:
         """Append new sample to the rolling history and request a repaint."""
@@ -50,26 +50,27 @@ class SpeedGraphWidget(QWidget):
         w = self.width()
         h = self.height()
 
-        # Margins for axis labels
+        # Layout boundaries
         left_margin = 65
         right_margin = 20
-        top_margin = 35
-        bottom_margin = 25
+        top_margin = 40
+        bottom_margin = 26
 
         plot_w = max(10, w - left_margin - right_margin)
         plot_h = max(10, h - top_margin - bottom_margin)
 
-        # 1. Background Fill
-        painter.fillRect(0, 0, w, h, QColor("#1E293B"))
+        # 1. Background Fill & Rounded Border
+        painter.setPen(QColor("#27272A"))
+        painter.setBrush(QColor("#18181B"))
+        painter.drawRoundedRect(QRectF(0, 0, w, h), 8, 8)
 
         # Determine ceiling scale (minimum 100 KB/s to prevent visual noise)
         max_val = max(max(self.download_history), max(self.upload_history), 100 * 1024)
-        # Add 15% headroom for clean visualization
         max_scale = max_val * 1.15
 
         # 2. Draw Horizontal Grid Lines & Y-axis labels
-        grid_pen = QPen(QColor("#334155"), 1, Qt.PenStyle.DashLine)
-        text_pen = QPen(QColor("#94A3B8"))
+        grid_pen = QPen(QColor("#27272A"), 1, Qt.PenStyle.SolidLine)
+        text_pen = QPen(QColor("#71717A"))
         axis_font = QFont("Segoe UI", 8)
         painter.setFont(axis_font)
 
@@ -86,7 +87,7 @@ class SpeedGraphWidget(QWidget):
             # Y-Axis Text Label
             painter.setPen(text_pen)
             painter.drawText(
-                QRectF(5, y_pos - 8, left_margin - 10, 16),
+                QRectF(4, y_pos - 8, left_margin - 8, 16),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 format_speed(val_at_grid)
             )
@@ -97,7 +98,7 @@ class SpeedGraphWidget(QWidget):
         for lbl, ratio in time_labels:
             x_pos = left_margin + plot_w * ratio
             painter.drawText(
-                QRectF(x_pos - 20, h - bottom_margin + 5, 40, 16),
+                QRectF(x_pos - 20, h - bottom_margin + 6, 40, 16),
                 Qt.AlignmentFlag.AlignCenter,
                 lbl
             )
@@ -127,7 +128,6 @@ class SpeedGraphWidget(QWidget):
             if not pts:
                 return
 
-            # Gradient fill under curve
             path_pts = [QPointF(pts[0].x(), top_margin + plot_h)] + pts + [QPointF(pts[-1].x(), top_margin + plot_h)]
             gradient = QLinearGradient(0, top_margin, 0, top_margin + plot_h)
             gradient.setColorAt(0.0, grad_top_color)
@@ -145,23 +145,23 @@ class SpeedGraphWidget(QWidget):
                 painter.drawLine(pts[i], pts[i + 1])
 
         # Draw Upload (Emerald)
-        draw_stream(pts_up, QColor("#10B981"), QColor(16, 185, 129, 60))
+        draw_stream(pts_up, QColor("#10B981"), QColor(16, 185, 129, 35))
 
         # Draw Download (Cyan)
-        draw_stream(pts_down, QColor("#38BDF8"), QColor(56, 189, 248, 80))
+        draw_stream(pts_down, QColor("#38BDF8"), QColor(56, 189, 248, 55))
 
-        # 5. Header / Legend Overlay
+        # 5. Header / Telemetry Legend
         header_font = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
         painter.setFont(header_font)
 
         # Download Badge
         painter.setPen(QColor("#38BDF8"))
-        down_legend = f"● Download: {format_speed(self.current_down)} (Peak: {format_speed(self.peak_down)})"
-        painter.drawText(left_margin + 5, 20, down_legend)
+        down_legend = f"● Download: {format_speed(self.current_down)}   (Peak: {format_speed(self.peak_down)})"
+        painter.drawText(left_margin + 4, 24, down_legend)
 
         # Upload Badge
         painter.setPen(QColor("#10B981"))
-        up_legend = f"● Upload: {format_speed(self.current_up)} (Peak: {format_speed(self.peak_up)})"
-        painter.drawText(left_margin + 320, 20, up_legend)
+        up_legend = f"● Upload: {format_speed(self.current_up)}   (Peak: {format_speed(self.peak_up)})"
+        painter.drawText(left_margin + 330, 24, up_legend)
 
         painter.end()

@@ -1,12 +1,12 @@
-"""Main window dashboard for Yaze."""
+"""Main window dashboard for Yaze featuring a Studio Minimalist sidebar architecture."""
 
 import time
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTabWidget, QFrame, QPushButton, QTableWidget, QTableWidgetItem,
+    QStackedWidget, QFrame, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QLineEdit, QProgressBar, QCheckBox, QSpinBox,
-    QComboBox, QMessageBox, QApplication, QSystemTrayIcon
+    QComboBox, QMessageBox, QApplication, QSystemTrayIcon, QButtonGroup
 )
 from PyQt6.QtGui import QFont, QIcon, QColor
 
@@ -20,8 +20,24 @@ from core.alert_manager import AlertManager
 from ui.graph_widget import SpeedGraphWidget
 from ui.tray import YazeTrayIcon
 
+class TabAdapter(QStackedWidget):
+    """StackedWidget adapter providing tab-compatible methods for test harnesses."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tab_titles = []
+
+    def addTab(self, widget: QWidget, title: str) -> int:
+        idx = self.addWidget(widget)
+        self._tab_titles.append(title)
+        return idx
+
+    def tabText(self, index: int) -> str:
+        if 0 <= index < len(self._tab_titles):
+            return self._tab_titles[index]
+        return ""
+
 class MainWindow(QMainWindow):
-    """Main dashboard containing the overview, process tracker, history, speed test, and settings."""
+    """Studio Minimalist dashboard featuring a vertical sidebar rail and live telemetry cockpit."""
 
     def __init__(self, config: ConfigManager, db: DatabaseManager, monitor: NetworkMonitor,
                  startup: StartupManager, parent=None):
@@ -34,8 +50,8 @@ class MainWindow(QMainWindow):
         self._is_force_quitting = False
 
         self.setWindowTitle("Yaze – Real-Time Network Monitor")
-        self.resize(960, 680)
-        self.setMinimumSize(800, 580)
+        self.resize(1000, 680)
+        self.setMinimumSize(850, 580)
 
         # Initialize Alert Engine
         self.alert_manager = AlertManager(self.config, self.show_toast_notification)
@@ -66,70 +82,150 @@ class MainWindow(QMainWindow):
     def _setup_ui(self) -> None:
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(16, 14, 16, 14)
-        main_layout.setSpacing(12)
+        root_layout = QHBoxLayout(central_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        # Header Bar
-        header = self._create_header_bar()
-        main_layout.addWidget(header)
+        # 1. Left Sidebar Rail (210px)
+        sidebar = self._create_sidebar()
+        root_layout.addWidget(sidebar)
 
-        # Tabs
-        self.tabs = QTabWidget()
+        # 2. Right Content Workspace (Stacked Widget)
+        self.tabs = TabAdapter()
         self.tabs.addTab(self._create_overview_tab(), "Overview")
         self.tabs.addTab(self._create_applications_tab(), "Applications")
         self.tabs.addTab(self._create_analytics_tab(), "Analytics & History")
         self.tabs.addTab(self._create_speedtest_tab(), "Speed Test")
         self.tabs.addTab(self._create_settings_tab(), "Settings")
 
-        main_layout.addWidget(self.tabs)
+        # Keep sidebar buttons and stacked widget in sync
+        self.tabs.currentChanged.connect(self._sync_sidebar_selection)
 
-    def _create_header_bar(self) -> QWidget:
-        header = QFrame()
-        header.setFixedHeight(48)
-        header.setStyleSheet("background-color: #1E293B; border-radius: 8px; border: 1px solid #334155;")
-        h_layout = QHBoxLayout(header)
-        h_layout.setContentsMargins(14, 0, 14, 0)
+        root_layout.addWidget(self.tabs, stretch=1)
 
-        # App Brand & Status
-        title_label = QLabel("⚡ YAZE  NETWORK MONITOR")
-        title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        title_label.setStyleSheet("color: #38BDF8; letter-spacing: 1px;")
+    def _create_sidebar(self) -> QWidget:
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(210)
+        sidebar.setStyleSheet("""
+            QFrame#sidebar {
+                background-color: #0E0E10;
+                border-right: 1px solid #27272A;
+            }
+        """)
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(14, 18, 14, 16)
+        layout.setSpacing(8)
 
-        self.header_status_label = QLabel("● Connected")
-        self.header_status_label.setStyleSheet("color: #10B981; font-weight: 600; margin-left: 12px;")
+        # Brand Header
+        brand_box = QVBoxLayout()
+        brand_box.setSpacing(3)
+        brand_title = QLabel("⚡ YAZE")
+        brand_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        brand_title.setStyleSheet("color: #FFFFFF; letter-spacing: 1px;")
 
-        h_layout.addWidget(title_label)
-        h_layout.addWidget(self.header_status_label)
-        h_layout.addStretch()
+        self.sidebar_status_badge = QLabel("● Live Telemetry")
+        self.sidebar_status_badge.setStyleSheet("color: #10B981; font-size: 11px; font-weight: 600;")
 
-        # Minimize to Tray Button
+        brand_box.addWidget(brand_title)
+        brand_box.addWidget(self.sidebar_status_badge)
+        layout.addLayout(brand_box)
+        layout.addSpacing(16)
+
+        # Navigation Rail Buttons
+        self.nav_btn_group = QButtonGroup(self)
+        self.nav_btn_group.setExclusive(True)
+        self.nav_buttons = []
+
+        nav_items = [
+            ("⚡ Overview", 0),
+            ("📊 Applications", 1),
+            ("📈 Analytics", 2),
+            ("🚀 Speed Test", 3),
+            ("⚙️ Settings", 4),
+        ]
+
+        for label, idx in nav_items:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setProperty("class", "nav-item")
+            btn.setFixedHeight(38)
+            btn.setStyleSheet("""
+                QPushButton.nav-item {
+                    background-color: transparent;
+                    color: #A1A1AA;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    font-weight: 600;
+                    font-size: 13px;
+                    text-align: left;
+                }
+                QPushButton.nav-item:hover {
+                    background-color: #18181B;
+                    color: #FFFFFF;
+                }
+                QPushButton.nav-item:checked {
+                    background-color: #27272A;
+                    color: #FFFFFF;
+                    font-weight: 700;
+                    border-left: 3px solid #38BDF8;
+                }
+            """)
+            btn.clicked.connect(lambda _, i=idx: self.tabs.setCurrentIndex(i))
+            self.nav_btn_group.addButton(btn, idx)
+            self.nav_buttons.append(btn)
+            layout.addWidget(btn)
+
+        self.nav_buttons[0].setChecked(True)
+
+        layout.addStretch()
+
+        # Sidebar Bottom Utilities
+        self.sidebar_conn_label = QLabel("Wi-Fi: Detecting...")
+        self.sidebar_conn_label.setStyleSheet("color: #71717A; font-size: 11px;")
+        layout.addWidget(self.sidebar_conn_label)
+
         btn_min = QPushButton("Minimize to Tray")
         btn_min.setProperty("class", "secondary")
+        btn_min.setFixedHeight(32)
         btn_min.setStyleSheet("""
             QPushButton {
-                background-color: #334155;
-                color: #F8FAFC;
+                background-color: #18181B;
+                color: #A1A1AA;
+                border: 1px solid #27272A;
                 border-radius: 6px;
-                padding: 5px 12px;
-                font-size: 12px;
+                font-size: 11px;
                 font-weight: 600;
             }
-            QPushButton:hover { background-color: #475569; }
+            QPushButton:hover {
+                background-color: #27272A;
+                color: #FFFFFF;
+                border: 1px solid #3F3F46;
+            }
         """)
         btn_min.clicked.connect(self.hide)
-        h_layout.addWidget(btn_min)
+        layout.addWidget(btn_min)
 
-        return header
+        return sidebar
+
+    def _sync_sidebar_selection(self, index: int) -> None:
+        if 0 <= index < len(self.nav_buttons):
+            self.nav_buttons[index].setChecked(True)
+        # Immediate refresh on tab activation
+        if index == 1:
+            self._on_process_tick()
+        elif index == 2:
+            self._refresh_analytics()
 
     # =========================================================================
-    # TAB 1: OVERVIEW
+    # TAB 1: OVERVIEW (Immersive Real-Time Oscilloscope)
     # =========================================================================
     def _create_overview_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(10, 12, 10, 10)
-        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
 
         # 1. Four Metric KPI Cards
         cards_layout = QHBoxLayout()
@@ -137,8 +233,8 @@ class MainWindow(QMainWindow):
 
         self.card_down_speed = self._create_kpi_card("DOWNLOAD SPEED", "0.0 KB/s", "#38BDF8")
         self.card_up_speed = self._create_kpi_card("UPLOAD SPEED", "0.0 KB/s", "#10B981")
-        self.card_today_down = self._create_kpi_card("TODAY'S DOWNLOAD", "0.0 MB", "#60A5FA")
-        self.card_today_up = self._create_kpi_card("TODAY'S UPLOAD", "0.0 MB", "#A78BFA")
+        self.card_today_down = self._create_kpi_card("TODAY RECEIVED", "0.0 MB", "#FFFFFF")
+        self.card_today_up = self._create_kpi_card("TODAY SENT", "0.0 MB", "#FFFFFF")
 
         cards_layout.addWidget(self.card_down_speed["frame"])
         cards_layout.addWidget(self.card_up_speed["frame"])
@@ -146,56 +242,89 @@ class MainWindow(QMainWindow):
         cards_layout.addWidget(self.card_today_up["frame"])
         layout.addLayout(cards_layout)
 
-        # 2. Live Speed Graph
+        # 2. Immersive Real-Time Speed Oscilloscope
         self.speed_graph = SpeedGraphWidget(self.config.get("graph_history_points", 60))
         layout.addWidget(self.speed_graph, stretch=1)
 
-        # 3. Connection & Wi-Fi Details Card
-        wifi_card = QFrame()
-        wifi_card.setStyleSheet("background-color: #1E293B; border: 1px solid #334155; border-radius: 8px; padding: 10px;")
-        w_layout = QHBoxLayout(wifi_card)
-        w_layout.setContentsMargins(12, 8, 12, 8)
+        # 3. Connection & Wi-Fi Details Bar
+        conn_bar = QFrame()
+        conn_bar.setObjectName("conn_bar")
+        conn_bar.setStyleSheet("""
+            QFrame#conn_bar {
+                background-color: #18181B;
+                border: 1px solid #27272A;
+                border-radius: 8px;
+            }
+            QLabel {
+                background-color: transparent;
+                border: none;
+            }
+        """)
+        c_layout = QHBoxLayout(conn_bar)
+        c_layout.setContentsMargins(14, 10, 14, 10)
+        c_layout.setSpacing(18)
 
         self.wifi_ssid_label = QLabel("SSID: Detecting...")
         self.wifi_ssid_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.wifi_signal_label = QLabel("Signal: --")
+        self.wifi_signal_label.setStyleSheet("color: #A1A1AA;")
         self.wifi_ip_label = QLabel("Local IP: 127.0.0.1")
+        self.wifi_ip_label.setStyleSheet("color: #A1A1AA;")
         self.wifi_adapter_label = QLabel("Adapter: --")
+        self.wifi_adapter_label.setStyleSheet("color: #A1A1AA;")
 
-        w_layout.addWidget(self.wifi_ssid_label)
-        w_layout.addSpacing(20)
-        w_layout.addWidget(self.wifi_signal_label)
-        w_layout.addSpacing(20)
-        w_layout.addWidget(self.wifi_ip_label)
-        w_layout.addSpacing(20)
-        w_layout.addWidget(self.wifi_adapter_label)
-        w_layout.addStretch()
+        c_layout.addWidget(self.wifi_ssid_label)
+        c_layout.addWidget(self.wifi_signal_label)
+        c_layout.addWidget(self.wifi_ip_label)
+        c_layout.addWidget(self.wifi_adapter_label)
+        c_layout.addStretch()
 
         btn_reset_peaks = QPushButton("Reset Peaks")
-        btn_reset_peaks.setStyleSheet("background-color: #334155; padding: 4px 10px; font-size: 11px;")
+        btn_reset_peaks.setStyleSheet("""
+            QPushButton {
+                background-color: #27272A;
+                color: #E4E4E7;
+                border: 1px solid #3F3F46;
+                padding: 4px 10px;
+                font-size: 11px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #3F3F46;
+                color: #FFFFFF;
+            }
+        """)
         btn_reset_peaks.clicked.connect(self.speed_graph.reset_peaks)
-        w_layout.addWidget(btn_reset_peaks)
+        c_layout.addWidget(btn_reset_peaks)
 
-        layout.addWidget(wifi_card)
+        layout.addWidget(conn_bar)
         return tab
 
     def _create_kpi_card(self, title: str, initial_value: str, accent_color: str) -> dict:
         frame = QFrame()
+        frame.setObjectName("kpi_card")
         frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: #1E293B;
-                border: 1px solid #334155;
-                border-top: 3px solid {accent_color};
+            QFrame#kpi_card {{
+                background-color: #18181B;
+                border: 1px solid #27272A;
+                border-top: 2px solid {accent_color};
                 border-radius: 8px;
-                padding: 10px;
+            }}
+            QFrame#kpi_card:hover {{
+                border: 1px solid #3F3F46;
+                border-top: 2px solid {accent_color};
+            }}
+            QLabel {{
+                background-color: transparent;
+                border: none;
             }}
         """)
         vbox = QVBoxLayout(frame)
-        vbox.setContentsMargins(8, 8, 8, 8)
-        vbox.setSpacing(4)
+        vbox.setContentsMargins(12, 10, 12, 10)
+        vbox.setSpacing(6)
 
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;")
+        lbl_title.setStyleSheet("color: #A1A1AA; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;")
 
         lbl_val = QLabel(initial_value)
         lbl_val.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
@@ -206,18 +335,18 @@ class MainWindow(QMainWindow):
         return {"frame": frame, "title": lbl_title, "value": lbl_val}
 
     # =========================================================================
-    # TAB 2: APPLICATIONS (Per-Process Network Usage)
+    # TAB 2: APPLICATIONS (Per-Process Bandwidth Telemetry)
     # =========================================================================
     def _create_applications_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(10, 12, 10, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
 
-        # Controls Bar
+        # Header controls
         ctrl_bar = QHBoxLayout()
         self.proc_search = QLineEdit()
-        self.proc_search.setPlaceholderText("Filter processes by name or PID...")
+        self.proc_search.setPlaceholderText("Filter active processes by name or PID...")
         self.proc_search.textChanged.connect(self._filter_process_table)
 
         btn_refresh = QPushButton("Refresh Now")
@@ -231,7 +360,7 @@ class MainWindow(QMainWindow):
         self.proc_table = QTableWidget()
         self.proc_table.setColumnCount(5)
         self.proc_table.setHorizontalHeaderLabels([
-            "Application / Process", "PID", "Download Rate", "Upload Rate", "Total I/O Data"
+            "APPLICATION / PROCESS", "PID", "DOWNLOAD RATE", "UPLOAD RATE", "TOTAL I/O DATA"
         ])
         header = self.proc_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -251,44 +380,44 @@ class MainWindow(QMainWindow):
     def _create_analytics_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(10, 12, 10, 10)
+        layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
         # All-time summary cards
         sum_layout = QHBoxLayout()
         self.all_time_down = self._create_kpi_card("ALL-TIME DOWNLOAD", "0.0 GB", "#38BDF8")
         self.all_time_up = self._create_kpi_card("ALL-TIME UPLOAD", "0.0 GB", "#10B981")
-        self.all_time_total = self._create_kpi_card("TOTAL BANDWIDTH", "0.0 GB", "#F59E0B")
+        self.all_time_total = self._create_kpi_card("TOTAL BANDWIDTH", "0.0 GB", "#FFFFFF")
         sum_layout.addWidget(self.all_time_down["frame"])
         sum_layout.addWidget(self.all_time_up["frame"])
         sum_layout.addWidget(self.all_time_total["frame"])
         layout.addLayout(sum_layout)
 
         # Weekly Breakdown Table
-        lbl_weekly = QLabel("📅 Past 7 Days Bandwidth Consumption")
-        lbl_weekly.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        lbl_weekly = QLabel("Past 7 Days Bandwidth Consumption")
+        lbl_weekly.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         layout.addWidget(lbl_weekly)
 
         self.weekly_table = QTableWidget()
         self.weekly_table.setColumnCount(4)
-        self.weekly_table.setHorizontalHeaderLabels(["Date", "Downloaded", "Uploaded", "Total Data"])
+        self.weekly_table.setHorizontalHeaderLabels(["DATE", "DOWNLOADED", "UPLOADED", "TOTAL DATA"])
         w_header = self.weekly_table.horizontalHeader()
         w_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         w_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         w_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         w_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.weekly_table.verticalHeader().setVisible(False)
-        self.weekly_table.setMaximumHeight(200)
+        self.weekly_table.setMaximumHeight(180)
         layout.addWidget(self.weekly_table)
 
         # Speed Test History
-        lbl_speed = QLabel("🚀 Recent Speed Test Records")
-        lbl_speed.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        lbl_speed = QLabel("Recent Speed Test Records")
+        lbl_speed.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         layout.addWidget(lbl_speed)
 
         self.speed_history_table = QTableWidget()
         self.speed_history_table.setColumnCount(5)
-        self.speed_history_table.setHorizontalHeaderLabels(["Timestamp", "Download", "Upload", "Ping", "Server"])
+        self.speed_history_table.setHorizontalHeaderLabels(["TIMESTAMP", "DOWNLOAD", "UPLOAD", "PING", "SERVER"])
         s_header = self.speed_history_table.horizontalHeader()
         s_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         s_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -299,6 +428,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.speed_history_table)
 
         btn_refresh_analytics = QPushButton("Refresh Analytics")
+        btn_refresh_analytics.setProperty("class", "secondary")
         btn_refresh_analytics.clicked.connect(self._refresh_analytics)
         layout.addWidget(btn_refresh_analytics)
 
@@ -310,17 +440,18 @@ class MainWindow(QMainWindow):
     def _create_speedtest_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(10, 16, 10, 16)
+        layout.setContentsMargins(18, 20, 18, 20)
         layout.setSpacing(16)
 
         # Title & Server Info
         header_box = QVBoxLayout()
+        header_box.setSpacing(4)
         st_title = QLabel("Internet Bandwidth Speed Test")
-        st_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        st_title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
         st_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.st_server_lbl = QLabel("Testing Server: Cloudflare Edge Global Network")
-        self.st_server_lbl.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.st_server_lbl.setStyleSheet("color: #A1A1AA; font-size: 12px;")
         self.st_server_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         header_box.addWidget(st_title)
@@ -329,7 +460,7 @@ class MainWindow(QMainWindow):
 
         # Results Cards
         res_layout = QHBoxLayout()
-        res_layout.setSpacing(16)
+        res_layout.setSpacing(14)
         self.st_ping_card = self._create_kpi_card("LATENCY (PING)", "-- ms", "#F59E0B")
         self.st_down_card = self._create_kpi_card("DOWNLOAD BANDWIDTH", "-- Mbps", "#38BDF8")
         self.st_up_card = self._create_kpi_card("UPLOAD BANDWIDTH", "-- Mbps", "#10B981")
@@ -341,7 +472,7 @@ class MainWindow(QMainWindow):
         # Progress Section
         self.st_status_lbl = QLabel("Click 'Start Speed Test' to measure network bandwidth")
         self.st_status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.st_status_lbl.setStyleSheet("color: #94A3B8; font-weight: 600;")
+        self.st_status_lbl.setStyleSheet("color: #A1A1AA; font-weight: 600;")
         layout.addWidget(self.st_status_lbl)
 
         self.st_progress = QProgressBar()
@@ -376,17 +507,17 @@ class MainWindow(QMainWindow):
     def _create_settings_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(14, 16, 14, 16)
+        layout.setContentsMargins(18, 20, 18, 20)
         layout.setSpacing(16)
 
         # General Card
         card_gen = QFrame()
-        card_gen.setStyleSheet("background-color: #1E293B; border: 1px solid #334155; border-radius: 8px; padding: 14px;")
+        card_gen.setStyleSheet("background-color: #18181B; border: 1px solid #27272A; border-radius: 8px; padding: 14px;")
         gen_layout = QVBoxLayout(card_gen)
         gen_layout.setSpacing(10)
 
         lbl_gen = QLabel("General Application Settings")
-        lbl_gen.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        lbl_gen.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         gen_layout.addWidget(lbl_gen)
 
         self.chk_startup = QCheckBox("Launch Yaze automatically when Windows starts up")
@@ -408,12 +539,12 @@ class MainWindow(QMainWindow):
 
         # Alerts Card
         card_alert = QFrame()
-        card_alert.setStyleSheet("background-color: #1E293B; border: 1px solid #334155; border-radius: 8px; padding: 14px;")
+        card_alert.setStyleSheet("background-color: #18181B; border: 1px solid #27272A; border-radius: 8px; padding: 14px;")
         alert_layout = QVBoxLayout(card_alert)
         alert_layout.setSpacing(10)
 
         lbl_alert = QLabel("Low-Speed Alert Thresholds")
-        lbl_alert.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        lbl_alert.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         alert_layout.addWidget(lbl_alert)
 
         self.chk_low_speed = QCheckBox("Enable Low-Speed Notifications")
@@ -443,12 +574,12 @@ class MainWindow(QMainWindow):
 
         # Network Adapter Selector Card
         card_adapter = QFrame()
-        card_adapter.setStyleSheet("background-color: #1E293B; border: 1px solid #334155; border-radius: 8px; padding: 14px;")
+        card_adapter.setStyleSheet("background-color: #18181B; border: 1px solid #27272A; border-radius: 8px; padding: 14px;")
         ad_layout = QVBoxLayout(card_adapter)
         ad_layout.setSpacing(10)
 
         lbl_ad = QLabel("Network Adapter Selection")
-        lbl_ad.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        lbl_ad.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         ad_layout.addWidget(lbl_ad)
 
         ad_select_box = QHBoxLayout()
@@ -468,7 +599,7 @@ class MainWindow(QMainWindow):
 
         # Maintenance & Reset
         card_maint = QFrame()
-        card_maint.setStyleSheet("background-color: #1E293B; border: 1px solid #334155; border-radius: 8px; padding: 14px;")
+        card_maint.setStyleSheet("background-color: #18181B; border: 1px solid #27272A; border-radius: 8px; padding: 14px;")
         maint_layout = QHBoxLayout(card_maint)
         maint_layout.addWidget(QLabel("Data Management:"))
         maint_layout.addStretch()
@@ -527,20 +658,19 @@ class MainWindow(QMainWindow):
         if wifi_info.get("is_wifi"):
             self.wifi_ssid_label.setText(f"SSID: {wifi_info.get('ssid')}")
             self.wifi_signal_label.setText(f"Signal: {wifi_info.get('signal')}")
-            self.header_status_label.setText("● Wi-Fi Connected")
-            self.header_status_label.setStyleSheet("color: #10B981; font-weight: 600; margin-left: 12px;")
+            self.sidebar_status_badge.setText(f"● Wi-Fi: {wifi_info.get('ssid')}")
+            self.sidebar_conn_label.setText(f"Wi-Fi: {wifi_info.get('ssid')}")
         else:
             self.wifi_ssid_label.setText(f"Network: {wifi_info.get('state', 'Connected')}")
             self.wifi_signal_label.setText("Type: Ethernet / LAN")
-            self.header_status_label.setText("● LAN Connected")
-            self.header_status_label.setStyleSheet("color: #38BDF8; font-weight: 600; margin-left: 12px;")
+            self.sidebar_status_badge.setText("● LAN Connected")
+            self.sidebar_conn_label.setText("Ethernet / LAN")
 
         self.wifi_ip_label.setText(f"Local IP: {wifi_info.get('local_ip', '127.0.0.1')}")
         self.wifi_adapter_label.setText(f"Adapter: {wifi_info.get('active_adapter', 'N/A')}")
 
     def _on_process_tick(self) -> None:
         """Periodic query for active application processes."""
-        # Only populate table if the Applications tab is currently active to save resources
         if self.tabs.currentIndex() != 1:
             return
 
@@ -707,7 +837,6 @@ class MainWindow(QMainWindow):
                     QSystemTrayIcon.MessageIcon.Information,
                     3000
                 )
-                # Remind user once per session
                 self.config.set("notify_on_minimize", False)
 
     def force_quit(self) -> None:
